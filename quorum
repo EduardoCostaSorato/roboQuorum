@@ -1,0 +1,305 @@
+// ==UserScript==
+// @name         PJE - Robô de Troca de Quórum
+// @namespace    http://tampermonkey.net/
+// @version      11.0
+// @description  Automatiza troca de quórum no PJe
+// @match        *://pje2i.tjdft.jus.br/*
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+(function(){
+
+if(window.__roboQuorumRodando) return;
+window.__roboQuorumRodando=true;
+
+/* ---------------------
+UTILITÁRIOS
+--------------------- */
+
+function normalizar(txt){
+return txt
+? txt.normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toUpperCase()
+: "";
+}
+
+function delay(ms){
+return new Promise(r=>setTimeout(r,ms));
+}
+
+/* ---------------------
+CRIAR PAINEL
+--------------------- */
+
+function criarPainel(){
+
+if(document.getElementById("painelQuorum")) return;
+
+const painel=document.createElement("div");
+
+painel.id="painelQuorum";
+
+Object.assign(painel.style,{
+position:"fixed",
+top:"20px",
+right:"20px",
+width:"260px",
+background:"white",
+border:"3px solid #0078d4",
+padding:"10px",
+zIndex:"999999",
+borderRadius:"8px",
+boxShadow:"0 0 10px black",
+fontFamily:"Arial"
+});
+
+painel.innerHTML=`
+
+<b style="color:#0078d4">ROBÔ DE QUÓRUM</b>
+
+<input id="removerMag"
+placeholder="Magistrado sair"
+style="width:100%;margin-top:8px">
+
+<input id="incluirMag"
+placeholder="Magistrado entrar"
+style="width:100%;margin-top:8px">
+
+<button id="executarQuorum"
+style="width:100%;margin-top:10px;background:#0078d4;color:white;border:none;padding:8px">
+
+ABRIR JULGAMENTOS
+
+</button>
+
+`;
+
+document.body.appendChild(painel);
+
+document.getElementById("executarQuorum").onclick=()=>{
+
+const r=document.getElementById("removerMag").value;
+const i=document.getElementById("incluirMag").value;
+
+localStorage.setItem("magRemover",r);
+localStorage.setItem("magIncluir",i);
+
+abrirJulgamentos();
+
+};
+
+}
+
+/* ---------------------
+ABRIR JULGAMENTOS
+--------------------- */
+
+function abrirJulgamentos(){
+
+const selecionados=[
+...document.querySelectorAll("[id*='selectUnselect:checkedImg']")
+];
+
+selecionados.forEach((el,index)=>{
+
+const match=el.id.match(/j_id886:(\d+)/);
+if(!match) return;
+
+const linha=match[1];
+
+const botao=document.querySelector(
+`#formProcessosPautados\\:j_id886\\:${linha}\\:botaoAtualizarForm\\:j_id897`
+);
+
+if(!botao) return;
+
+const onclick=botao.getAttribute("onclick");
+
+const urlMatch=onclick.match(/popUpVotoSessao\.seam\?id=\d+/);
+
+if(urlMatch){
+
+const url="/pje/Painel/SecretarioSessao/"+urlMatch[0];
+
+setTimeout(()=>{
+
+window.open(url,"_blank");
+
+},index*1200);
+
+}
+
+});
+
+}
+
+/* ---------------------
+VERIFICAR QUÓRUM
+--------------------- */
+
+function quorumJaCorreto(){
+
+const incluir = normalizar(localStorage.getItem("magIncluir"));
+
+const magistrados=[...document.querySelectorAll("span[id*='idMagistradoColuna']")]
+.map(e=>normalizar(e.innerText));
+
+return magistrados.includes(incluir);
+
+}
+
+/* ---------------------
+ABRIR COMPOSIÇÃO
+--------------------- */
+
+async function abrirComposicao(){
+
+await delay(1200);
+
+const btn=[...document.querySelectorAll("button,a")]
+.find(el=>el.innerText?.includes("ALTERAR COMPOSIÇÃO"));
+
+if(btn){
+
+btn.click();
+
+}
+
+}
+
+/* ---------------------
+TROCAR QUÓRUM
+--------------------- */
+
+async function trocarQuorum(){
+
+await delay(1500);
+
+if(quorumJaCorreto()){
+
+console.log("Quórum já correto");
+
+setTimeout(()=>window.close(),1500);
+
+return;
+
+}
+
+const remover=normalizar(localStorage.getItem("magRemover"));
+const incluir=normalizar(localStorage.getItem("magIncluir"));
+
+const magistrados=[...document.querySelectorAll("span[id*='idMagistradoColuna']")];
+
+const alvo=magistrados.find(el=>normalizar(el.innerText)===remover);
+
+if(alvo){
+
+window.confirm=()=>true;
+
+const excluir=alvo.closest("tr").querySelector("a[title='Excluir']");
+
+excluir.click();
+
+}
+
+await delay(1200);
+
+/* selecionar órgão */
+
+const orgao=document.getElementById(
+"composicaoForm:idDecorateOrgaoJulgador:idOrgaoJulgador"
+);
+
+if(orgao){
+
+for(let opt of orgao.options){
+
+if(normalizar(opt.text).includes(incluir)){
+
+orgao.value=opt.value;
+
+orgao.dispatchEvent(new Event("change",{bubbles:true}));
+
+break;
+
+}
+
+}
+
+}
+
+await delay(1500);
+
+/* selecionar magistrado */
+
+const mag=document.getElementById(
+"composicaoForm:idMagistradoSelectDecoration:idMagistradoSelect"
+);
+
+if(mag){
+
+for(let opt of mag.options){
+
+if(normalizar(opt.text).includes(incluir)){
+
+mag.value=opt.value;
+
+break;
+
+}
+
+}
+
+}
+
+/* marcar presente */
+
+const presente=document.getElementById(
+"composicaoForm:presenteDecoration:presenteSelectOneRadio:0"
+);
+
+if(presente) presente.click();
+
+await delay(600);
+
+/* salvar */
+
+const salvar=document.getElementById("composicaoForm:persistButton");
+
+if(salvar){
+
+salvar.click();
+
+await delay(2000);
+
+window.close();
+
+}
+
+}
+
+/* ---------------------
+DETECTAR TELAS
+--------------------- */
+
+const url=location.href;
+
+if(url.includes("Painel")){
+
+setTimeout(criarPainel,1200);
+
+}
+
+if(url.includes("popUpVotoSessao")){
+
+abrirComposicao();
+
+}
+
+if(url.includes("popUpComposicaoProcesso")){
+
+trocarQuorum();
+
+}
+
+})();
